@@ -12,7 +12,7 @@ logger.setLevel(logging.INFO)
 
 # Search Query
 query = 'UK Economy'
-tenant_id = 'tenant_one'
+tenant_id = 'tenant_two'
 today_date = datetime.today().date()
 
 s3_client = boto3.client('s3', region_name='us-east-1')
@@ -26,7 +26,7 @@ def lambda_handler(event, context):
         #raise Exception("Intentional error occurred")
         
         # Extract data from web scraping
-        filepath = extract_data() #f'raw-data/{tenant_id}/{today_date}.json'
+        filepath = extract_data() #f'raw-data/{tenant_id}/{today_date}.json' 
         
         # Record end time
         end_time = time.time()
@@ -40,7 +40,7 @@ def lambda_handler(event, context):
         # Return output
         output = {
             'statusCode': 200,
-            'body': json.dumps({'filepath': filepath})
+            'body': json.dumps({'filepath': filepath, 'tenant_id_job':f'{tenant_id}/{today_date}'})
         }
         
         return output
