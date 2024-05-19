@@ -1,0 +1,73 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "DataExtraction-Lambda",
+  "States": {
+    "DataExtraction-Lambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:news_crwaler_test1:$LATEST"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Transformation-Lambda",
+      "ResultPath": "$.Payload"
+    },
+    "Transformation-Lambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:transformation:$LATEST",
+        "Payload": {
+          "sampleKey1": "sampleValue1",
+          "key3": 100,
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "DataLoading-Lambda",
+      "ResultPath": "$.Payload"
+    },
+    "DataLoading-Lambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:DataLoading",
+        "Payload": {
+          "sampleKey1": "sampleValue1",
+          "key3": 100,
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "End": true,
+      "InputPath": "$.Payload"
+    }
+  }
+}
