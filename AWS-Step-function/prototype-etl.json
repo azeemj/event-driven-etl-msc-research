@@ -1,73 +1,175 @@
 {
   "Comment": "A description of my state machine",
-  "StartAt": "DataExtraction-Lambda",
+  "StartAt": "SplitFile-Lambda",
   "States": {
-    "DataExtraction-Lambda": {
+    "SplitFile-Lambda": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "arn:aws:lambda:us-east-1:905418415996:function:DataSplit:$LATEST",
       "Parameters": {
-        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:news_crwaler_test1:$LATEST"
+        "bucket_name.$": "$.bucket_name",
+        "tenant_id.$": "$.tenant_id",
+        "file_key.$": "$.file_key",
+        "chunk_size.$": "$.chunk_size"
       },
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
-          "IntervalSeconds": 60,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
-      "Next": "Transformation-Lambda",
-      "ResultPath": "$.Payload"
+      "Next": "ProcessChunks",
+      "ResultPath": "$.split_file_output"
     },
-    "Transformation-Lambda": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+    "ProcessChunks": {
+      "Type": "Map",
+      "InputPath": "$.split_file_output",
+      "ItemsPath": "$.chunk_keys",
+      "MaxConcurrency": 1,
       "Parameters": {
-        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:transformation:$LATEST",
-        "Payload": {
-          "sampleKey1": "sampleValue1",
-          "key3": 100,
-          "input_to_lambda.$": "$.Payload"
+        "chunk_key.$": "$$.Map.Item.Value",
+        "correlation_id.$": "$.correlation_id",
+        "tenant_id.$": "$.tenant_id"
+      },
+      "Iterator": {
+        "StartAt": "DataExtraction-Lambda",
+        "States": {
+          "DataExtraction-Lambda": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:905418415996:function:Phase3-Data-Extraction",
+            "Parameters": {
+              "chunk_key.$": "$.chunk_key",
+              "correlation_id.$": "$.correlation_id",
+              "tenant_id.$": "$.tenant_id"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Next": "HandleDataExtractionErrorLambda",
+                "ResultPath": "$.error"
+              }
+            ],
+            "Next": "Transformation-Lambda",
+            "ResultPath": "$.extracted"
+          },
+          "Transformation-Lambda": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:905418415996:function:Phase3-Transformation",
+            "Parameters": {
+              "chunk_key.$": "$.chunk_key",
+              "correlation_id.$": "$.correlation_id",
+              "tenant_id.$": "$.tenant_id",
+              "filepath.$": "$.extracted.filepath"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Next": "RevertDataFromTransformationLambda",
+                "ResultPath": "$.error"
+              }
+            ],
+            "Next": "LoadDataLambda",
+            "ResultPath": "$.transformed"
+          },
+          "LoadDataLambda": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:905418415996:function:Phase3-DataLoad",
+            "Parameters": {
+              "input_to_lambda.$": "$.transformed"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Next": "RevertDataFromLoadErrorLambda",
+                "ResultPath": "$.error"
+              }
+            ],
+            "Next": "BackupDataLambda",
+            "ResultPath": "$.loaded"
+          },
+          "BackupDataLambda": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:905418415996:function:Phase3-BackupData",
+            "Parameters": {
+              "input_to_lambda.$": "$.loaded"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 60,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "End": true
+          },
+          "HandleDataExtractionErrorLambda": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:905418415996:function:HandleDataExtractionErrorLambda:$LATEST",
+            "Parameters": {
+              "input_to_lambda.$": "$.error"
+            },
+            "End": true
+          },
+          "RevertDataFromTransformationLambda": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:905418415996:function:RevertDataFromTransformationLambda:$LATEST",
+            "Parameters": {
+              "input_to_lambda.$": "$.error"
+            },
+            "End": true
+          },
+          "RevertDataFromLoadErrorLambda": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:us-east-1:905418415996:function:HandleDataExtractionErrorLambda:$LATEST",
+            "Parameters": {
+              "input_to_lambda.$": "$.error"
+            },
+            "End": true
+          }
         }
       },
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
-          "IntervalSeconds": 60,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
-      "Next": "DataLoading-Lambda",
-      "ResultPath": "$.Payload"
-    },
-    "DataLoading-Lambda": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:DataLoading",
-        "Payload": {
-          "sampleKey1": "sampleValue1",
-          "key3": 100,
-          "input_to_lambda.$": "$.Payload"
-        }
-      },
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
-          "IntervalSeconds": 60,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
-      "End": true,
-      "InputPath": "$.Payload"
+      "End": true
     }
   }
 }

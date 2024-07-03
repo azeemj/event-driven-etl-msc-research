@@ -1,0 +1,181 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "DataExtraction-Lambda",
+  "States": {
+    "DataExtraction-Lambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:DataExtraction-phase02:$LATEST"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "HandleDataExtractionErrorLambda",
+          "ResultPath": "$.Payload"
+        }
+      ],
+      "Next": "Transformation-Lambda",
+      "ResultPath": "$.Payload"
+    },
+    "Transformation-Lambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "DataTransformation-Phase02",
+        "Payload": {
+          "sampleKey1": "sampleValue1",
+          "key3": 100,
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "RevertDataFromTarnsformationLambda"
+        }
+      ],
+      "Next": "LoadDataLambda"
+    },
+    "LoadDataLambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:DataLoading-Phase02:$LATEST",
+        "Payload": {
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "RevertDataFromLoadErrorLambda"
+        }
+      ],
+      "Next": "BackupDataLambda",
+      "ResultPath": "$.Payload"
+    },
+    "BackupDataLambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:BackupDataLambda:$LATEST",
+        "Payload": {
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 60,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "HandleBackupErrorLambda"
+        }
+      ],
+      "Next": "End"
+    },
+    "HandleBackupErrorLambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:HandleDataExtractionErrorLambda:$LATEST",
+        "Payload": {
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "End": true
+    },
+    "HandleDataExtractionErrorLambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:HandleDataExtractionErrorLambda:$LATEST",
+        "Payload": {
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "End": true
+    },
+    "RevertDataFromTarnsformationLambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:RevertDataFromTransformationLambda:$LATEST",
+        "Payload": {
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "End": true
+    },
+    "RevertDataFromLoadErrorLambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:us-east-1:905418415996:function:HandleDataExtractionErrorLambda:$LATEST",
+        "Payload": {
+          "input_to_lambda.$": "$.Payload"
+        }
+      },
+      "End": true
+    },
+    "End": {
+      "Type": "Pass",
+      "End": true
+    }
+  }
+}
