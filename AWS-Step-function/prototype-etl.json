@@ -11,6 +11,16 @@
         "file_key.$": "$.file_key",
         "chunk_size.$": "$.chunk_size"
       },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
       "Next": "ProcessChunks",
       "ResultPath": "$.split_file_output"
     },
@@ -18,7 +28,7 @@
       "Type": "Map",
       "InputPath": "$.split_file_output",
       "ItemsPath": "$.chunk_keys",
-      "MaxConcurrency": 1,
+      "MaxConcurrency": 4,
       "Parameters": {
         "chunk_key.$": "$$.Map.Item.Value",
         "correlation_id.$": "$.correlation_id",
