@@ -1,1 +1,5 @@
 venv/
+django-server.pem
+putt-django-privatekey.ppk
+putt-key-convert.ppk
+common_env/
