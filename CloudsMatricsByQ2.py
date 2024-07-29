@@ -40,9 +40,8 @@ def get_step_function_execution_times(execution_arn):
     end_time = None
     task_start_times = {}
     task_end_times = {}
-    produce_matrics_start_time_stamp  = None
-    
-    logger.info(f"produce events ???????????????- {events}")
+    produce_metrics_start_time_stamp = None
+
     for event in events:
         event_timestamp = event['timestamp']
         if event['type'] == 'ExecutionStarted':
@@ -54,47 +53,39 @@ def get_step_function_execution_times(execution_arn):
             if state_name not in task_start_times:
                 task_start_times[state_name] = []
             task_start_times[state_name].append(event_timestamp)
-            #ProducMtarics entered time is assigned to calculated Step machine exit time 
-            if state_name == 'ProduceMetrics' :
-                produce_matrics_start_time_stamp = event_timestamp
-            
+            # ProduceMetrics entered time is assigned to calculated Step machine exit time
+            if state_name == 'ProduceMetrics':
+                produce_metrics_start_time_stamp = event_timestamp
         elif event['type'] == 'TaskStateExited':
             state_name = event['stateExitedEventDetails']['name']
             if state_name not in task_end_times:
                 task_end_times[state_name] = []
             task_end_times[state_name].append(event_timestamp)
-
-    
+   
     # Calculate individual task execution times
     task_execution_times = {}
-    
     for task in task_start_times:
         if task in task_end_times:
             total_task_time = sum(
-                (end - start).total_seconds() 
+                (end - start).total_seconds()
                 for start, end in zip(task_start_times[task], task_end_times[task])
             )
-            
-            
             task_execution_times[task] = total_task_time
-    logger.info(f"task_execution_times ???????????????- {task_execution_times}")    
-    logger.info(f"produce_matrics_start_time_stamp ???????????????- {produce_matrics_start_time_stamp}")
-    logger.info(f"start_time ???????????????- {start_time}")
-    #total_execution_time = (end_time - start_time).total_seconds() if start_time and end_time else None
-    total_execution_time = (produce_matrics_start_time_stamp - start_time).total_seconds() if start_time and produce_matrics_start_time_stamp else None
-    logger.info(f"total_execution_time ???????????????- {total_execution_time}")
+
     
+
+    # Calculate total execution time up to ProduceMetrics task start time
+    total_execution_time = (produce_metrics_start_time_stamp - start_time).total_seconds() if start_time and produce_metrics_start_time_stamp else None
+    logger.info(f"total_execution_time ???????????????- {total_execution_time}")
+
     return total_execution_time, task_execution_times
 
 def lambda_handler(event, context):
     logger.info(f"produce metrics event- {event}")
     execution_arn = event.get('executionArn')
-    #execution_arn = 'arn:aws:states:us-east-1:905418415996:execution:MyStateMachine-un3o6ponq:3006046f-6779-402a-9746-baca87a28bb3'
     tenant_id = event.get('tenant_id')
-    #tenant_id = 'tenant_one'
     execution_id = context.aws_request_id
     log_group_name = '/aws/vendedlogs/states/MyStateMachine-phase3-ETL-datapipeline'
-
 
     if not execution_arn or not log_group_name:
         return {
@@ -107,16 +98,22 @@ def lambda_handler(event, context):
         while retry_attempts > 0:
             # Get Step Function execution times
             total_execution_time, task_execution_times = get_step_function_execution_times(execution_arn)
-            print('task_execution_times',task_execution_times)
+            print('task_execution_times', task_execution_times)
             print('total_execution_time', total_execution_time)
-            
+
             if len(task_execution_times) < 5:
                 retry_attempts -= 1
                 time.sleep(2)  # Adding a small delay before retrying
                 continue
             break
 
-        if retry_attempts == 0:
+        if any(task in task_execution_times for task in [
+            'HandleDataExtractionErrorLambda',
+            'RevertDataFromTransformationLambda',
+            'RevertDataFromLoadErrorLambda'
+             ]):
+            logger.info("Exception handled:")
+        elif retry_attempts == 0:
             return {
                 'statusCode': 500,
                 'body': 'Failed to retrieve valid execution times after retries.'
@@ -126,31 +123,34 @@ def lambda_handler(event, context):
         logger.info("Individual task execution times:")
         for task, task_time in task_execution_times.items():
             logger.info(f"{task}: {task_time} seconds")
-            
-            custom_message = {
-                'event': 'Step Function Execution stage wise - Metrics', 
-                'tenant_id': tenant_id,
-                'stage': task,
-                'execution_arn': execution_arn,
-                'execution_id': context.aws_request_id,
-                'total_execution_time_seconds': task_time
-            }
-            log_group_name_to_summarise = '/aws/states/Phase-03-un3o6ponq'
-            log_to_cloudwatch(context.aws_request_id, custom_message, log_group_name_to_summarise)
-        
+
+            if task != 'ProduceMetrics':
+                custom_message = {
+                    'event': 'Step Function Execution stage wise - Metrics',
+                    'tenant_id': tenant_id,
+                    'stage': task,
+                    'execution_arn': execution_arn,
+                    'execution_id': context.aws_request_id,
+                    'total_execution_time_seconds': task_time,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                log_group_name_to_summarise = '/aws/states/Phase-03-un3o6ponq'
+                log_to_cloudwatch(context.aws_request_id, custom_message, log_group_name_to_summarise)
+
         # Log the total execution time of the entire Step Function
         if total_execution_time is not None:
             total_execution_message = {
-                'event': 'Step Function Total Execution Time', 
+                'event': 'Step Function Total Execution Time',
                 'tenant_id': tenant_id,
                 'execution_id': context.aws_request_id,
                 'execution_arn': execution_arn,
-                'total_execution_time_seconds': total_execution_time
+                'total_execution_time_seconds': total_execution_time,
+                'timestamp': datetime.utcnow().isoformat()
             }
-            
+
             log_group_name_to_summarise = '/aws/states/Phase-03-un3o6ponq'
             log_to_cloudwatch(context.aws_request_id, total_execution_message, log_group_name_to_summarise)
-    
+
         return {
             'statusCode': 200,
             'body': {
@@ -167,7 +167,7 @@ def lambda_handler(event, context):
 
 def log_to_cloudwatch(execution_id, message, log_group_name):
     log_stream_name = '{}'.format(execution_id)
-    
+
     try:
         # Check if the log group exists
         response = logs_client.describe_log_groups(
@@ -177,7 +177,7 @@ def log_to_cloudwatch(execution_id, message, log_group_name):
             # Log group doesn't exist, create it
             logs_client.create_log_group(logGroupName=log_group_name)
             logger.info(f"Created log group: {log_group_name}")
-        
+
         # Check if the log stream exists
         response = logs_client.describe_log_streams(
             logGroupName=log_group_name,

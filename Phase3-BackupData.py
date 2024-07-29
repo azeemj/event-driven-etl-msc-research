@@ -17,10 +17,10 @@ def lambda_handler(event, context):
         
         # Extract filepath from the event payload
         filename_data = event['input_to_lambda']
-        source_key = filename_data['filepath']  # e.g., "transformed-data/processed-data/tenant_one/2024-06-18.csv"
-        
+        source_key = filename_data['transformed_file_path']  # e.g., "transformed-data/processed-data/tenant_one/2024-06-18.csv"
+        tenant_id = filename_data['tenant_id']
         # Define the destination key
-        destination_key = source_key.replace("transformed-data/processed-data", "load-data")
+        destination_key = source_key.replace("transformed-data/processed-data", "final-backup-data")
         
         # Copy the file from the source key to the destination key
         copy_source = {'Bucket': Bucket, 'Key': source_key}
@@ -31,7 +31,9 @@ def lambda_handler(event, context):
         # Return output
         output = {
             'statusCode': 200,
-            'body': json.dumps({'source': source_key, 'destination': destination_key})
+            'source': source_key,
+            'destination': destination_key,
+            'tenant_id': tenant_id
         }
         
         return output
@@ -41,5 +43,6 @@ def lambda_handler(event, context):
         error_output = {
             'statusCode': 500,
             'error_message': str(e),
+            'tenant_id': tenant_id
         }
         raise Exception(json.dumps(error_output))

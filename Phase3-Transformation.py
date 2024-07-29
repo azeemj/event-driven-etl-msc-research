@@ -12,7 +12,7 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3', region_name='us-east-1')
 dynamodb_client = boto3.client('dynamodb')
-stage = "Extraction"
+stage = "Transformation"
 #tenant_id = 'tenant_one'
 today_date = datetime.today().date()
 Bucket = 'event-driven-msc'
@@ -24,9 +24,17 @@ def lambda_handler(event, context):
     chunk_key = event.get('chunk_key')
     correlation_id = event.get('correlation_id')
     tenant_id = event.get('tenant_id')
-    filename = event.get('filepath')
+    execution_arn = event.get('executionArn')
     
+    #raw file data 
+    raw_data_file_path = event.get('raw_data_file_path', None)
+    filename = raw_data_file_path
+    
+    processed_data = None
     tracking_table_name = f'ETLDemoTrackingTable{tenant_id}'
+    
+    if not all([chunk_key, correlation_id, filename, execution_arn]):
+        raise ValueError('Required missing parameters')
     
     try:
         # Record start time
@@ -45,25 +53,21 @@ def lambda_handler(event, context):
         processed_data = transformation(event, filename, correlation_id)
         
         
-        
-       
-       
         # Create tracking table if it does not exist
         create_dynamodb_table_if_not_exists(tracking_table_name)
         logger.info(f'Inserting record with Key: {correlation_id} and Stage: {stage} into {tracking_table_name}')
         # Insert tracking information into DynamoDB
-        insert_into_dynamDB(tracking_table_name, correlation_id, stage, filename, "Sucess")
-        
-       
-        
-        
+        insert_into_dynamDB(tracking_table_name, correlation_id, stage, filename, "Sucess", execution_arn)
+      
         # Return output
         output = {
             'statusCode': 200,
             'tenant_id_job': f'{tenant_id}/{today_date}',
             'correlation_id': correlation_id,
             'chunk_key': chunk_key,
-            'filepath': processed_data
+            'processed_data': processed_data,
+            'tenant_id': tenant_id,
+            'raw_data_file_path': raw_data_file_path
             
         }
         
@@ -74,7 +78,6 @@ def lambda_handler(event, context):
          # Log execution time
         logger.info(f"Execution time: {execution_time} seconds")
        
-        
         return output
     
     except Exception as e:
@@ -84,13 +87,16 @@ def lambda_handler(event, context):
         error_output = {
             'error_message': str(e),
             'tenant_id_job': f'{tenant_id}/{today_date}',
-            'correlation_id': correlation_id
+            'correlation_id': correlation_id,
+            'tenant_id': tenant_id,
+            'raw_data_file_path': raw_data_file_path,
+            'processed_data': processed_data
         }
         # Create tracking table if it does not exist
         create_dynamodb_table_if_not_exists(tracking_table_name)
         logger.info(f'Inserting record with Key: {correlation_id} and Stage: {stage} into {tracking_table_name}')
         # Insert tracking information into DynamoDB
-        insert_into_dynamDB(tracking_table_name, correlation_id, stage, "Unknown", "Failed")
+        insert_into_dynamDB(tracking_table_name, correlation_id, stage, "Unknown", "Failed", execution_arn)
         
         raise Exception(json.dumps(error_output))
 
@@ -102,7 +108,7 @@ def transformation(event, filename, correlation_id):
         
         # Parse JSON content
         data = json.loads(json_content)
-        
+        #raise Exception("Intentional exception")
         # Extract relevant data and transform
         news_data = []
         for headline in data:
@@ -159,15 +165,17 @@ def create_dynamodb_table_if_not_exists(table_name):
         dynamodb_client.get_waiter('table_exists').wait(TableName=table_name)
         logger.info(f"Table {table_name} created.")
 
-def insert_into_dynamDB(table_name, correlation_id, stage, tracking_file, job_status):
+def insert_into_dynamDB(table_name, correlation_id, stage, tracking_file, status, execution_arn):
     if not correlation_id or not stage:
-        raise ValueError(f'Missing required keys: correlation_id={correlation_id}, stage={stage}')
+        raise ValueError(f'Missing required keys: correlation_id={correlation_id}, stage={stage}', execution_arn)
         
     item = {
-        'CorrelationId': {'S': correlation_id},
-        'Stage': {'S': stage},
-        'TrackingFile': {'S': tracking_file},
-        'JobStatus': {'S': job_status}
+        "CorrelationId": {"S": correlation_id},
+        "Stage": {"S": stage},
+        "TrackingInfo": {"S": tracking_file},
+        "Status": {"S": status},
+        'arn': {'S': execution_arn},
+        'timestamp': {'S': datetime.utcnow().isoformat()}
     }
     logger.info(f"Inserting item into DynamoDB: {item}")
     dynamodb_client.put_item(TableName=table_name, Item=item)

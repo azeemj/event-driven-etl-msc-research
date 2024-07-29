@@ -5,5 +5,15 @@
 </head>
 <body>
     <h1>Welcome to {{ tenant.name }}'s page!</h1>
+
+    {% if grafana_dashboard_url %}
+    <h1>Grafana Dashboard</h1>
+    <iframe src="{{ grafana_dashboard_url }}" width="100%" height="600" frameborder="0"></iframe>
+{% else %}
+    <p>No Grafana dashboard URL available.</p>
+{% endif %}
+
+<iframe src="http://54.145.59.155:3000/d/ads0pvv57fx1cc/monitoring-dashboard-copy?orgId=1&refresh=15m&var-tenant_id=&var-arn=arn%3Aaws%3Astates%3Aus-east-1%3A905418415996%3Aexecution%3AMyStateMachine-un3o6ponq%3A7d4aaa0e-b5f9-4eef-94dc-9e1ac04a0df5&from=1721223699206&to=1721225499206" width="100%" height="600" frameborder="0"></iframe>
+
 </body>
 </html>

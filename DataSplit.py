@@ -2,172 +2,226 @@ import boto3
 import json
 from datetime import datetime
 import logging
-import time
-import pandas as pd
 import uuid
+import time
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-s3_client = boto3.client('s3', region_name='us-east-1')
-dynamodb_client = boto3.client('dynamodb')
-stage = "Extraction"
-#tenant_id = 'tenant_one'
-today_date = datetime.today().date()
-Bucket = 'event-driven-msc'
+s3_client = boto3.client('s3')
+dynamodb = boto3.client('dynamodb')
+
+# Initialize boto3 client for CloudWatch Logs
+cloudwatch = boto3.client('logs')
 
 
-def lambda_handler(event, context):
-    logger.info(f'Event: {event}')
-    logger.info(f"correlation_id: {event.get('correlation_id')}")
-    chunk_key = event.get('chunk_key')
-    correlation_id = event.get('correlation_id')
-    tenant_id = event.get('tenant_id')
-    filename = event.get('filepath')
-    
-    tracking_table_name = f'ETLDemoTrackingTable{tenant_id}'
-    
+def create_dynamodb_table(table_name):
     try:
-        # Record start time
-        start_time = time.time()
-        
-        # Copy the S3 data to a backup location
-        copy_source = {'Bucket': Bucket, 'Key': filename}
-        replaced_key = filename.replace('raw-data', 'backup-data')
-        backup_key = f'transformed-data/{replaced_key}'
-        
-        # Process the chunk
-        s3_client.copy_object(CopySource=copy_source, Bucket=Bucket, Key= backup_key)
-        logger.info(f'Backup of {filename} created at {backup_key}')
-        
-        # Perform transformation
-        processed_data = transformation(event, filename, correlation_id)
-        
-        
-        
-       
-       
-        # Create tracking table if it does not exist
-        create_dynamodb_table_if_not_exists(tracking_table_name)
-        logger.info(f'Inserting record with Key: {correlation_id} and Stage: {stage} into {tracking_table_name}')
-        # Insert tracking information into DynamoDB
-        insert_into_dynamDB(tracking_table_name, correlation_id, stage, filename, "Sucess")
-        
-       
-        
-        
-        # Return output
-        output = {
-            'statusCode': 200,
-            'tenant_id_job': f'{tenant_id}/{today_date}',
-            'correlation_id': correlation_id,
-            'chunk_key': chunk_key,
-            'filepath': processed_data
-            
-        }
-        
-        # Record end time
-        end_time = time.time()
-        # Calculate execution time
-        execution_time = end_time - start_time
-         # Log execution time
-        logger.info(f"Execution time: {execution_time} seconds")
-       
-        
-        return output
-    
-    except Exception as e:
-         # Log and return error response
-        logger.info(f'Error:{e}')
-        print('test')
-        error_output = {
-            'error_message': str(e),
-            'tenant_id_job': f'{tenant_id}/{today_date}',
-            'correlation_id': correlation_id
-        }
-        # Create tracking table if it does not exist
-        create_dynamodb_table_if_not_exists(tracking_table_name)
-        logger.info(f'Inserting record with Key: {correlation_id} and Stage: {stage} into {tracking_table_name}')
-        # Insert tracking information into DynamoDB
-        insert_into_dynamDB(tracking_table_name, correlation_id, stage, "Unknown", "Failed")
-        
-        raise Exception(json.dumps(error_output))
-
-def transformation(event, filename, correlation_id):
-    try:
-        # Get JSON content from S3
-        response = s3_client.get_object(Bucket=Bucket, Key=filename)
-        json_content = response['Body'].read().decode('utf-8')
-        
-        # Parse JSON content
-        data = json.loads(json_content)
-        
-        # Extract relevant data and transform
-        news_data = []
-        for headline in data:
-            if len(headline) > 5:
-                news_data.append({
-                    'Title': headline[2] if len(headline[2]) > 0 else 'Missing',
-                    'Source': headline[0] if len(headline[0]) > 0 else 'Missing',
-                    'Time': headline[3] if len(headline[3]) > 0 else 'Missing',
-                    'Author': headline[4].split('By ')[-1] if len(headline[4]) > 0 else 'Missing',
-                    'Link': headline[5] if len(headline[5]) > 0 else 'Missing',
-                    'CorrelationId': correlation_id,
-                    'Key' : str(uuid.uuid4())
-                })
-        
-        # Convert to DataFrame
-        news_df = pd.DataFrame(news_data)
-        
-        # Convert DataFrame to CSV format
-        csv_content = news_df.to_csv(index=False)
-        
-        # Write CSV content to S3
-        csv_key = filename.replace('.json', '.csv')
-        replaced_key = csv_key.replace('raw-data', 'processed-data')
-       
-        s3_client.put_object(Bucket=Bucket, Key=f"transformed-data/{replaced_key}", Body=csv_content.encode('utf-8'))
-        
-        logger.info(f'Transformation completed.')
-        return f"transformed-data/{replaced_key}"
-    except Exception as e:
-        # Log and raise exception
-        logger.info(f'Error during transformation:{e}')
-        raise e
-
-def create_dynamodb_table_if_not_exists(table_name):
-    existing_tables = dynamodb_client.list_tables()['TableNames']
-    if table_name not in existing_tables:
-        logger.info(f"Table {table_name} does not exist. Creating...")
-        dynamodb_client.create_table(
+        table = dynamodb.create_table(
             TableName=table_name,
             KeySchema=[
-                {'AttributeName': 'CorrelationId', 'KeyType': 'HASH'},
-                {'AttributeName': 'Stage', 'KeyType': 'RANGE'}
+                {
+                    'AttributeName': 'tenant_id',
+                    'KeyType': 'HASH'  # Partition key
+                },
+                {
+                    'AttributeName': 'chunk_key',
+                    'KeyType': 'RANGE'  # Sort key
+                }
             ],
             AttributeDefinitions=[
-                {'AttributeName': 'CorrelationId', 'AttributeType': 'S'},
-                {'AttributeName': 'Stage', 'AttributeType': 'S'}
+                {
+                    'AttributeName': 'tenant_id',
+                    'AttributeType': 'S'
+                },
+                {
+                    'AttributeName': 'chunk_key',
+                    'AttributeType': 'S'
+                }
             ],
             ProvisionedThroughput={
                 'ReadCapacityUnits': 5,
                 'WriteCapacityUnits': 5
             }
         )
-        # Wait until the table exists
-        dynamodb_client.get_waiter('table_exists').wait(TableName=table_name)
-        logger.info(f"Table {table_name} created.")
+        # Wait until the table exists.
+        dynamodb.get_waiter('table_exists').wait(TableName=table_name)
+        return True
+    except dynamodb.exceptions.ResourceInUseException:
+        # Table already exists
+        return True
+    except Exception as e:
+        logger.error(f"Error creating DynamoDB table: {str(e)}")
+        return f"Error creating DynamoDB table: {str(e)}"
 
-def insert_into_dynamDB(table_name, correlation_id, stage, tracking_file, job_status):
-    if not correlation_id or not stage:
-        raise ValueError(f'Missing required keys: correlation_id={correlation_id}, stage={stage}')
+def insert_into_dynamodb(tenant_id, chunk_key, number_of_records, correlation_id, 
+                            filename, stage= "initial"):
+    table_name = f'SplitDataTracker{tenant_id}'
+    
+    # Ensure the table exists
+    create_table_response = create_dynamodb_table(table_name)
+    if create_table_response is not True:
+        return create_table_response
+
+    try:
+        response = dynamodb.put_item(
+            TableName=table_name,
+            Item={
+                'tenant_id': {'S': tenant_id},
+                'chunk_key': {'S': chunk_key},
+                'upload_timestamp': {'S': datetime.utcnow().isoformat()},
+                'number_of_records': {'N': str(number_of_records)},
+                'correlation_id': {'S': correlation_id},
+                'filename': {'S': filename},
+                'stage': {'S': stage}
+            }
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error inserting into DynamoDB: {str(e)}")
+        return f"Error inserting into DynamoDB: {str(e)}"
+
+def split_file(bucket_name, file_key, tenant_id, chunk_size=1000, correlation_id=None):
+    # Use Lambda's /tmp/ directory for temporary files
+    download_path = '/tmp/2mb_data.json'
+
+    try:
+        # Download the file from S3
+        s3_client.download_file(bucket_name, file_key, download_path)
+        logger.info(f"Successfully downloaded {file_key} from bucket {bucket_name} to {download_path}")
+    except Exception as e:
+        logger.error(f"Error downloading file from S3: {str(e)}")
+        return f"Error downloading file from S3: {str(e)}"
+
+    # Load the JSON data
+    try:
+        with open(download_path, 'r') as file:
+            data = json.load(file)
+        logger.info("Successfully loaded JSON data from downloaded file")
+    except Exception as e:
+        logger.error(f"Error reading JSON data: {str(e)}")
+        return f"Error reading JSON data: {str(e)}"
+
+    # Check that the data is a list
+    if not isinstance(data, list):
+        error_msg = "The input data must be a list of records"
+        logger.error(error_msg)
+        return error_msg
+
+    # Extract the file name without extension
+    file_name = file_key.split('/')[-1].split('.')[0]
+
+    # Create the base folder path for the split files
+    base_folder = f'data/spilited_file/{tenant_id}/{correlation_id}'
+
+    # Split the data into chunks
+    chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
+
+    # Upload each chunk as a separate file
+    chunk_keys = []
+    for i, chunk in enumerate(chunks):
+        chunk_key = f'{base_folder}/{file_name}_chunk_{i}.json'
+        upload_path = f'/tmp/{file_name}_chunk_{i}.json'  # Using /tmp/ for Lambda writable directory
+        with open(upload_path, 'w') as chunk_file:
+            json.dump(chunk, chunk_file)
+        try:
+            s3_client.upload_file(upload_path, bucket_name, chunk_key)
+            chunk_keys.append(chunk_key)
+            
+            # Insert file information into DynamoDB
+            insert_response = insert_into_dynamodb(tenant_id, chunk_key, len(chunk), correlation_id, file_name)
+            if insert_response is not True:
+                return insert_response
+        except Exception as e:
+            logger.error(f"Error uploading chunk {chunk_key} to S3: {str(e)}")
+            return f"Error uploading chunk {chunk_key} to S3: {str(e)}"
+
+    return chunk_keys
+
+def lambda_handler(event, context):
+    # logs
+    
+
+    bucket_name = event.get('bucket_name', 'event-driven-msc')
+    tenant_id = event.get('tenant_id', 'tenant_one')
+    file_key = event.get('file_key', f'large-data-set/{tenant_id}/2mb_data_one_part.json')
+    chunk_size = event.get('chunk_size', 500)
+    log_group_name = event.get('log_group_name')
+    
+    logger.info(f"Starting split{event}")
+    
+    execution_id = context.aws_request_id
+    custom_message = {'event': 'Step Function Execution Started -Split',
+    'tenant_id': tenant_id, 'execution_id': execution_id}
+    #log_to_cloudwatch(execution_id, custom_message)
+    
+    # Generate correlation ID
+    correlation_id = str(uuid.uuid4())
+
+    logger.info(f"Starting split file process for tenant: {tenant_id}, file: {file_key}, chunk_size: {chunk_size}, correlation_id: {correlation_id}")
+
+    chunk_keys = split_file(bucket_name, file_key, tenant_id, chunk_size, correlation_id)
+
+    if isinstance(chunk_keys, list):
+        return {
+            'statusCode': 200,
+            'chunk_keys': chunk_keys,
+            'tenant_id': tenant_id,
+            'file_key': file_key,
+            'correlation_id': correlation_id,
+            'log_group_name': log_group_name
+        }
+    else:
+        return {
+            'statusCode': 500,
+            'tenant_id': tenant_id,
+            'errorMessage': chunk_keys  # Return the error message
+        }
+
+
+
+def log_to_cloudwatch(execution_id, message):
+    log_group_name = '/aws/states/Phase-03-un3o6ponq'
+    log_stream_name = '{}'.format(execution_id)
+
+    try:
+        # Check if the log group exists
+        response = cloudwatch.describe_log_groups(
+            logGroupNamePrefix=log_group_name
+        )
+        if len(response['logGroups']) == 0:
+            # Log group doesn't exist, create it
+            cloudwatch.create_log_group(logGroupName=log_group_name)
+            logger.info(f"Created log group: {log_group_name}")
         
-    item = {
-        'CorrelationId': {'S': correlation_id},
-        'Stage': {'S': stage},
-        'TrackingFile': {'S': tracking_file},
-        'JobStatus': {'S': job_status}
-    }
-    logger.info(f"Inserting item into DynamoDB: {item}")
-    dynamodb_client.put_item(TableName=table_name, Item=item)
+        # Check if the log stream exists
+        response = cloudwatch.describe_log_streams(
+            logGroupName=log_group_name,
+            logStreamNamePrefix=log_stream_name
+        )
+        if len(response['logStreams']) == 0:
+            # Log stream doesn't exist, create it
+            cloudwatch.create_log_stream(
+                logGroupName=log_group_name,
+                logStreamName=log_stream_name
+            )
+            logger.info(f"Created log stream: {log_stream_name}")
+
+        # Put log events to CloudWatch Logs
+        response = cloudwatch.put_log_events(
+            logGroupName=log_group_name,
+            logStreamName=log_stream_name,
+            logEvents=[
+                {
+                    'timestamp': int(round(time.time() * 1000)),
+                    'message': json.dumps(message)
+                }
+            ]
+        )
+        logger.info(f"Logged message to CloudWatch Logs. Response: {response}")
+
+    except cloudwatch.exceptions.ResourceNotFoundException as e:
+        logger.error(f"Log group does not exist: {log_group_name}. Error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error putting log events to CloudWatch Logs: {str(e)}")
