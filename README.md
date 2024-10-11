@@ -2,7 +2,7 @@
 Event-Driven ETL Pipeline
 Steps:
 
-1.Set up the ETL Data Pipeline
+ 1.Set up the ETL Data Pipeline
 
 2. Utilize AWS Step Functions by deploying the provided state machine definition from AWS-Step-function/prototype-etl.json.
 Build the Data Pipeline
