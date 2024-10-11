@@ -1,13 +1,38 @@
 # event-driven-etl
-Event driven ETL
+Event-Driven ETL Pipeline
 Steps:
-1. Setup ETL data pipline using AWS step functions which is avaibale AWS-Step-function/prototype-etl.json
-2. Build the data pipline based on the architecture diagram
-3. BUild the Follwong Lmbdas and connect them with AWS lambda functions
-4. Make sure S3 bucket permissions /Policies , AWS Lamnda permissions , AWS step functions permissoins
-5. Files are : DataSplit.py, Phase3-Data-Extraction.py, Phase3-Transformation.py, Phase3-DataLoad.py, Phase3-BackupData.py, RevertDataFromLoadErrorLambda.py, HandleDataExtractionErrorLambda.py, CloudsMatricsByQ2.py, RevertDataFromLoadErrorLambda.py
-6.Make sure to have setup Grafana , AWS logs on S3 , DynamoDB
-7. Check project output images for more details 
+
+1.Set up the ETL Data Pipeline
+
+2. Utilize AWS Step Functions by deploying the provided state machine definition from AWS-Step-function/prototype-etl.json.
+Build the Data Pipeline
+
+3. Follow the architecture diagram to structure the pipeline components and their interactions effectively.
+Develop Lambda Functions
+
+4. Implement the following Lambda functions and integrate them within the Step Functions workflow:
+DataSplit.py
+Phase3-Data-Extraction.py
+Phase3-Transformation.py
+Phase3-DataLoad.py
+Phase3-BackupData.py
+RevertDataFromLoadErrorLambda.py
+HandleDataExtractionErrorLambda.py
+CloudsMatricsByQ2.py
+
+5.Configure Permissions
+  Ensure appropriate permissions and policies are in place for:
+  S3 bucket access and policies
+  AWS Lambda execution roles
+  AWS Step Functions execution permissions
+  Integrate Monitoring
+
+6. Set up Grafana dashboards for visualization, log storage in S3, and monitoring via AWS CloudWatch.
+7. Leverage DynamoDB for state or checkpoint management if needed.
+8. Review Project Outputs
+
+Refer to the project’s output images for additional implementation details and expected results.
+ 
 
 ![Screenshot 2024-10-11 104050](https://github.com/user-attachments/assets/826d536f-47dd-40de-a2a1-9dbd687b2275)
 
